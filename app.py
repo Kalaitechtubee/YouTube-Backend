@@ -18,6 +18,23 @@ CORS(app)
 # FFMPEG_PATH: Set via environment variable, or defaults to 'ffmpeg' (must be in system PATH)
 FFMPEG_PATH = os.environ.get('FFMPEG_PATH', 'ffmpeg')
 
+# Path to cookies for yt-dlp to bypass bot detection
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+COOKIES_FILE = os.path.join(BASE_DIR, 'cookies.txt')
+
+# PRODUCTION SECURE METHOD: Load cookies from environment variable if available
+env_cookies = os.environ.get('YT_COOKIES')
+if env_cookies:
+    try:
+        with open(COOKIES_FILE, 'w', encoding='utf-8') as f:
+            f.write(env_cookies)
+        print("✅ Successfully loaded cookies from YT_COOKIES environment variable.")
+    except Exception as e:
+        print(f"❌ Error writing cookies from environment: {e}")
+
+if not os.path.exists(COOKIES_FILE):
+    COOKIES_FILE = None # Fallback if not found
+
 @app.route('/proxy_download/')
 def proxy_download():
     url = request.args.get('url')
@@ -292,6 +309,7 @@ def instagram_download():
             'skip_download': True,
             'no_check_certificates': True,
             'extract_flat': False,
+            'cookiefile': COOKIES_FILE,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -484,7 +502,8 @@ def download_video():
             'no_warnings': True,
             'skip_download': True,
             'format': 'best',
-            'no_check_certificates': True
+            'no_check_certificates': True,
+            'cookiefile': COOKIES_FILE,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -612,7 +631,8 @@ def download_audio():
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
-            'no_check_certificates': True
+            'no_check_certificates': True,
+            'cookiefile': COOKIES_FILE,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
