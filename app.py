@@ -3,6 +3,9 @@ import subprocess
 import tempfile
 import uuid
 import re
+import time
+import threading
+
 import requests
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
@@ -13,11 +16,8 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-# You must install ffmpeg and make sure it's in your PATH
-# Windows: choco install ffmpeg
-# Mac: brew install ffmpeg
-# Linux: sudo apt install ffmpeg
-FFMPEG_PATH = r'D:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe'
+# FFMPEG_PATH: Set via environment variable, or defaults to 'ffmpeg' (must be in system PATH)
+FFMPEG_PATH = os.environ.get('FFMPEG_PATH', 'ffmpeg')
 
 @app.route('/proxy_download/')
 def proxy_download():
@@ -54,8 +54,6 @@ def proxy_download():
         return Response(stream_with_context(generate()), headers=headers)
     except Exception as e:
         return str(e), 500
-
-import threading
 
 # Temporary storage for merges
 # Format: { download_id: { 'status': 'preparing'|'merging'|'ready'|'error', 'path': str, 'filename': str, 'error': str } }
@@ -103,7 +101,6 @@ def background_merge(download_id, video_url, audio_url, filename):
                 return True
             except Exception as e:
                 if attempt == 2: raise e
-                import time
                 time.sleep(2)
         return False
 
@@ -112,8 +109,6 @@ def background_merge(download_id, video_url, audio_url, filename):
         merge_status[download_id]['v_prog'] = 0
         merge_status[download_id]['a_prog'] = 0
         
-        # Download in parallel
-        v_thread = threading.Thread(target=download_with_retry, args=(video_url, video_path, "Video", "v_prog"))
         # Parallel Downloads
         threads = []
         if video_url:
@@ -167,8 +162,6 @@ def background_merge(download_id, video_url, audio_url, filename):
              if os.path.exists(output_path): os.remove(output_path)
              if os.path.exists(video_path):
                  os.rename(video_path, output_path)
-
-        cleanup_temps([video_path, audio_path])
 
         cleanup_temps([video_path, audio_path])
 
@@ -682,4 +675,4 @@ def download_audio():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)

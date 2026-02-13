@@ -1,2 +1,28 @@
+# Virtual environments
 /venv
-/__pycache__
+/temp_venv
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test / Debug artifacts
+output.txt
+test_*.py
+*.log
+
+# Temp files
+*.tmp
