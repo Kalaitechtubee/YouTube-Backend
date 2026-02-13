@@ -9,7 +9,6 @@ import threading
 import requests
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
-from pytubefix import YouTube
 import yt_dlp
 
 app = Flask(__name__)
@@ -479,81 +478,76 @@ def download_video():
         if not link:
             return jsonify({'error': 'No link provided'}), 400
 
-        utube = YouTube(link)
+        # Use yt-dlp instead of pytubefix to bypass bot detection
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'format': 'best',
+            'no_check_certificates': True
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=False)
+
+        title = info.get('title', 'YouTube Video')
+        thumbnail = info.get('thumbnail', '')
+        duration_sec = info.get('duration', 0)
+        duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}"
 
         streams_data = []
-        seen = set()
+        formats = info.get('formats', [])
+        
+        # Get best audio format for adaptive merging
+        best_audio = None
+        for f in formats:
+            if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
+                if not best_audio or f.get('abr', 0) > best_audio.get('abr', 0):
+                    best_audio = f
+        
+        best_audio_url = best_audio.get('url') if best_audio else None
 
-        # 1. Get Progressive streams (Video + Audio)
-        progressive = utube.streams.filter(progressive=True)
-        for vdo in progressive:
-            ext = vdo.mime_type.split('/')[-1]
-            res = vdo.resolution or '0p'
-            if res == '0p': continue # Filter invalid metadata
+        seen_resolutions = set()
+        for f in formats:
+            if f.get('vcodec') == 'none': continue # Skip audio-only here
             
-            key = f"prog_{res}_{ext}"
-            if key in seen:
+            res = f"{(f.get('height') or 0)}p"
+            if res == '0p': continue
+            
+            ext = f.get('ext', 'mp4')
+            has_audio = f.get('acodec') != 'none'
+            
+            # Key to avoid duplicates per resolution
+            key = f"{res}_{ext}"
+            if key in seen_resolutions:
                 continue
-            seen.add(key)
+            seen_resolutions.add(key)
 
-            try:
-                filesize_str = f"{round(vdo.filesize / (1024 * 1024), 2)} MB"
-            except Exception:
-                filesize_str = "N/A"
+            filesize = f.get('filesize') or f.get('filesize_approx', 0)
+            filesize_str = f"{round(filesize / (1024 * 1024), 2)} MB" if filesize else "N/A"
 
-            streams_data.append({
+            stream_item = {
                 'resolution': res,
                 'filesize': filesize_str,
-                'url': vdo.url,
+                'url': f.get('url'),
                 'extension': ext,
                 'type': 'video',
                 'format_label': ext.upper(),
-                'has_audio': True
-            })
-
-        # 2. Get Adaptive Video-only streams (often higher quality)
-        adaptive = utube.streams.filter(adaptive=True, only_video=True)
-        for vdo in adaptive:
-            ext = vdo.mime_type.split('/')[-1]
-            res = vdo.resolution or '0p'
-            if res == '0p': continue # Filter invalid metadata
+                'has_audio': has_audio
+            }
             
-            key = f"adapt_{res}_{ext}"
-            if key in seen:
-                continue
-            seen.add(key)
+            if not has_audio:
+                stream_item['audio_url'] = best_audio_url
+                
+            streams_data.append(stream_item)
 
-            try:
-                filesize_str = f"{round(vdo.filesize / (1024 * 1024), 2)} MB"
-            except Exception:
-                filesize_str = "N/A"
-
-            streams_data.append({
-                'resolution': res,
-                'filesize': filesize_str,
-                'url': vdo.url,
-                'extension': ext,
-                'type': 'video',
-                'format_label': ext.upper(),
-                'has_audio': False
-            })
-
-        # 3. Get Best Audio (to merge with adaptive video later)
-        best_audio = utube.streams.filter(only_audio=True).order_by('abr').desc().first()
-        best_audio_url = best_audio.url if best_audio else None
-
-        # Add best_audio_url to all adaptive streams
-        for s in streams_data:
-            if not s['has_audio']:
-                s['audio_url'] = best_audio_url
-
-        # Group and filter streams per quality/resolution
+        # Filter and group using existing logic
         streams_data = get_common_quality(streams_data)
 
         data_set = {
-            'title': utube.title,
-            'thumbnail': utube.thumbnail_url,
-            'duration': f"{utube.length // 60}:{utube.length % 60:02d}",
+            'title': title,
+            'thumbnail': thumbnail,
+            'duration': duration_str,
             'qualities': streams_data,
             'content_type': 'video',
             'best_audio_url': best_audio_url
@@ -561,7 +555,7 @@ def download_video():
 
         return jsonify(data_set)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"YouTube Video Error: {e}")
         return jsonify({'error': str(e)}), 500
 
 # **************************************************Video Download End*******************************************
@@ -613,62 +607,67 @@ def download_audio():
         if not link:
             return jsonify({'error': 'No link provided'}), 400
 
-        utube = YouTube(link)
+        # Use yt-dlp for audio extraction too
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'no_check_certificates': True
+        }
 
-        # Get all audio-only streams
-        ados = utube.streams.filter(only_audio=True).order_by('abr').desc()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(link, download=False)
+
+        title = info.get('title', 'YouTube Audio')
+        thumbnail = info.get('thumbnail', '')
+        duration_sec = info.get('duration', 0)
+        duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}"
 
         streams_data = []
-        seen = set()
-        for ado in ados:
-            raw_ext = ado.mime_type.split('/')[-1]
-
-            # Map to proper audio file extensions
-            if raw_ext == 'mp4':
-                ext = 'm4a'
-                format_label = 'M4A'
-            elif raw_ext == 'webm':
-                ext = 'webm'
-                format_label = 'WEBM'
-            else:
-                ext = raw_ext
-                format_label = ext.upper()
-
-            abr = ado.abr or '0kbps'
-            key = f"{abr}_{ext}"
-            if key in seen:
+        formats = info.get('formats', [])
+        
+        seen_abr = set()
+        for f in formats:
+            if f.get('vcodec') != 'none': continue # Skip formats with video
+            
+            abr = f.get('abr')
+            if not abr: continue
+            
+            abr_str = f"{int(abr)}kbps"
+            ext = f.get('ext', 'm4a')
+            
+            # Key to avoid duplicates per quality
+            key = f"{abr_str}_{ext}"
+            if key in seen_abr:
                 continue
-            seen.add(key)
+            seen_abr.add(key)
 
-            try:
-                filesize = ado.filesize
-                filesize_str = f"{round(filesize / (1024 * 1024), 2)} MB"
-            except Exception:
-                filesize_str = "N/A"
+            filesize = f.get('filesize') or f.get('filesize_approx', 0)
+            filesize_str = f"{round(filesize / (1024 * 1024), 2)} MB" if filesize else "N/A"
 
             streams_data.append({
-                'quality': abr,
+                'quality': abr_str,
                 'filesize': filesize_str,
-                'url': ado.url,
+                'url': f.get('url'),
                 'extension': ext,
                 'type': 'audio',
-                'format_label': format_label
+                'format_label': ext.upper()
             })
 
-        # Group and label entries
+        # Group and label using existing logic
         streams_data = get_common_audio_quality(streams_data)
 
         data_set = {
-            'title': utube.title,
-            'thumbnail': utube.thumbnail_url,
-            'duration': f"{utube.length // 60}:{utube.length % 60:02d}",
+            'title': title,
+            'thumbnail': thumbnail,
+            'duration': duration_str,
             'audio_qualities': streams_data,
             'content_type': 'audio'
         }
 
         return jsonify(data_set)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"YouTube Audio Error: {e}")
         return jsonify({'error': str(e)}), 500
 
 # ***************************************************Audio Download End********************************************
