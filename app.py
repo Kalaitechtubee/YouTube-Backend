@@ -420,6 +420,54 @@ def instagram_download():
 # **************************************************Instagram Download End*********************************************
 
 
+# **************************************************YouTube Proxy Start**********************************************
+@app.route('/youtube_proxy/')
+def youtube_proxy():
+    target_url = request.args.get('url')
+    if not target_url:
+        return "No URL provided", 400
+    
+    # Security: Only allow YouTube and Google Video domains
+    allowed_domains = ['youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com']
+    if not any(domain in target_url for domain in allowed_domains):
+        return "Domain not allowed", 403
+
+    try:
+        # Headers to mimic a real browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.youtube.com/',
+        }
+
+        # If cookies exist, use them to bypass bot detection on the proxy level
+        cookies = {}
+        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+             with open(COOKIES_FILE, 'r') as f:
+                 for line in f:
+                     if not line.startswith('#') and line.strip():
+                         parts = line.strip().split('\t')
+                         if len(parts) >= 7:
+                             cookies[parts[5]] = parts[6]
+
+        response = requests.get(target_url, headers=headers, cookies=cookies, timeout=10)
+        
+        # Return the response with CORS headers
+        # We use a custom response to control headers precisely
+        return Response(
+            response.content,
+            status=response.status_code,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': response.headers.get('Content-Type', 'text/plain'),
+            }
+        )
+    except Exception as e:
+        return str(e), 500
+# **************************************************YouTube Proxy End************************************************
+
+
 # **************************************************HomePage Start**********************************************
 @app.route('/', methods=['GET'])
 def home_page():
